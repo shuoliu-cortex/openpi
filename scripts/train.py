@@ -2,6 +2,7 @@ import dataclasses
 import functools
 import logging
 import platform
+import time
 from typing import Any
 
 import etils.epath as epath
@@ -255,19 +256,34 @@ def main(config: _config.TrainConfig):
         dynamic_ncols=True,
     )
 
+    lr_schedule = config.lr_schedule.create()
     infos = []
+    data_time = 0.0
+    interval_start = time.perf_counter()
     for step in pbar:
         with sharding.set_mesh(mesh):
             train_state, info = ptrain_step(train_rng, train_state, batch)
         infos.append(info)
         if step % config.log_interval == 0:
             stacked_infos = common_utils.stack_forest(infos)
+            # device_get blocks until all steps in this interval have finished, so the wall time below is accurate.
             reduced_info = jax.device_get(jax.tree.map(jnp.mean, stacked_infos))
-            info_str = ", ".join(f"{k}={v:.4f}" for k, v in reduced_info.items())
+            elapsed = time.perf_counter() - interval_start
+            num_steps = len(infos)
+            reduced_info["learning_rate"] = float(lr_schedule(step))
+            reduced_info["time_per_step"] = elapsed / num_steps
+            reduced_info["samples_per_sec"] = config.batch_size * num_steps / elapsed
+            # Time the host spends waiting for the next batch. Close to time_per_step means data loading bound.
+            reduced_info["data_time_per_step"] = data_time / num_steps
+            info_str = ", ".join(f"{k}={v:.4g}" for k, v in reduced_info.items())
             pbar.write(f"Step {step}: {info_str}")
             wandb.log(reduced_info, step=step)
             infos = []
+            data_time = 0.0
+            interval_start = time.perf_counter()
+        data_start = time.perf_counter()
         batch = next(data_iter)
+        data_time += time.perf_counter() - data_start
 
         if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
             _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)

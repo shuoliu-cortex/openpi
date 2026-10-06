@@ -78,6 +78,28 @@ def test_tokenize_prompt():
     assert np.allclose(tok_mask, data["tokenized_prompt_mask"])
 
 
+def test_tokenize_prompt_drop_state():
+    tokenizer = _tokenizer.PaligemmaTokenizer(max_len=48)
+    transform = _transforms.TokenizePrompt(tokenizer, discrete_state_input=True)
+    state = np.array([0.1, -0.5], dtype=np.float32)
+
+    data = transform({"prompt": "Hello", "state": state, "drop_state": True})
+
+    tok_prompt, _ = tokenizer.tokenize("Hello", np.zeros((0,), dtype=np.float32))
+    assert np.allclose(tok_prompt, data["tokenized_prompt"])
+    assert "drop_state" not in data
+    assert np.allclose(data["state"], state)
+
+
+def test_state_dropout():
+    data = {"state": np.zeros(2), "actions": np.zeros((4, 2))}
+
+    assert _transforms.StateDropout(1.0)(data)["drop_state"]
+    assert "drop_state" not in _transforms.StateDropout(0.0)(data)
+    # Inference samples have no actions and always keep the state.
+    assert "drop_state" not in _transforms.StateDropout(1.0)({"state": np.zeros(2)})
+
+
 def test_tokenize_no_prompt():
     transform = _transforms.TokenizePrompt(_tokenizer.PaligemmaTokenizer())
 

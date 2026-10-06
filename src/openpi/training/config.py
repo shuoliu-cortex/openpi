@@ -20,6 +20,8 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.yam_abc_policy as yam_abc_policy
+import openpi.policies.yam_ma2_policy as yam_ma2_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -424,6 +426,108 @@ class RLDSDroidDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotYamMa2DataConfig(DataConfigFactory):
+    """Config for the YAM Ma2 bimanual platform (2x 6-dof arms + grippers, cameras top/left/right).
+
+    Actions are absolute joint positions (no delta transform), matching robocurve/pi0.5-yam.
+    """
+
+    # If provided, will be injected into the input data if the "prompt" key is not present.
+    default_prompt: str | None = None
+    # Action keys that will be used to read the action sequence from the dataset.
+    action_sequence_keys: Sequence[str] = ("action",)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Maps LeRobot dataset keys to the keys expected by `YamMa2Inputs`. Only used for training.
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {
+                            "top": "observation.images.top",
+                            "left": "observation.images.left",
+                            "right": "observation.images.right",
+                        },
+                        "state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+        data_transforms = _transforms.Group(
+            inputs=[yam_ma2_policy.YamMa2Inputs()],
+            outputs=[yam_ma2_policy.YamMa2Outputs()],
+        )
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotYamAbcDataConfig(DataConfigFactory):
+    """Config for the YamAbc (XDOF/ABC) bimanual dataset with EEF actions (cameras top/left_wrist/right_wrist).
+
+    State is the absolute EEF pose (`observation.eef`). The absolute EEF action chunk (`action.eef`) is loaded and,
+    for every sampled chunk, converted on the fly into SE(3) poses relative to the chunk's first frame, i.e.
+    inv(T(observation.eef[t])) @ T(action.eef[t + k]) per arm. At inference the predicted relative actions are
+    converted back into absolute EEF poses. Ma2 (`LeRobotYamMa2DataConfig`) uses absolute joint actions instead.
+    """
+
+    # If provided, will be injected into the input data if the "prompt" key is not present.
+    default_prompt: str | None = None
+    # Action keys that will be used to read the action sequence from the dataset.
+    action_sequence_keys: Sequence[str] = ("action.eef",)
+    # Probability of hiding the absolute EEF state from the prompt for a training sample, so the policy does not
+    # rely too much on it. Inference always sees the state.
+    state_dropout_prob: float = 0.3
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Maps LeRobot dataset keys to the keys expected by `YamAbcInputs`. Only used for training.
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {
+                            "top": "observation.images.top",
+                            "left_wrist": "observation.images.left_wrist",
+                            "right_wrist": "observation.images.right_wrist",
+                        },
+                        "state": "observation.eef",
+                        "actions": "action.eef",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+        data_transforms = _transforms.Group(
+            inputs=[
+                yam_abc_policy.YamAbcInputs(),
+                yam_abc_policy.RelativeEefActions(),
+                _transforms.StateDropout(self.state_dropout_prob),
+            ],
+            outputs=[yam_abc_policy.AbsoluteEefActions(), yam_abc_policy.YamAbcOutputs()],
+        )
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class LeRobotDROIDDataConfig(DataConfigFactory):
     """
     Example data config for custom DROID dataset in LeRobot format.
@@ -760,6 +864,57 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
+    ),
+    #
+    # YAM bimanual configs.
+    #
+    TrainConfig(
+        # Config for https://huggingface.co/robocurve/pi0.5-yam. Download it first:
+        #   hf download robocurve/pi0.5-yam --local-dir checkpoints/pi0.5-yam
+        name="pi05_yam_ma2",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=16),
+        data=LeRobotYamMa2DataConfig(
+            repo_id="allenai/19012026-block-13",
+            assets=AssetsConfig(
+                assets_dir="./checkpoints/pi0.5-yam/assets",
+                asset_id="yam-bimanual-merged",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=2.5e-5,
+            decay_steps=20_000,
+            decay_lr=2.5e-6,
+        ),
+        ema_decay=0.99,
+        weight_loader=weight_loaders.CheckpointWeightLoader("./checkpoints/pi0.5-yam/params"),
+        num_train_steps=20_000,
+    ),
+    TrainConfig(
+        # YamAbc (XDOF/ABC) bimanual data with chunk-relative EEF actions. The dataset is expected at
+        # $HF_LEROBOT_HOME/<repo_id> (e.g. symlink the exported abc130k-eef directory there).
+        # Norm stats come from the dataset's precomputed H30 chunk stats; build them first with:
+        #   uv run scripts/yam_abc_norm_stats.py --meta-dir meta --horizon 30
+        # The action horizon must match the horizon those stats were computed with.
+        name="pi05_yam_abc",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=30),
+        data=LeRobotYamAbcDataConfig(
+            repo_id="local/abc130k-eef",
+            assets=AssetsConfig(asset_id="abc130k-eef"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=2.5e-5,
+            decay_steps=20_000,
+            decay_lr=2.5e-6,
+        ),
+        ema_decay=0.99,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=20_000,
     ),
     #
     # Fine-tuning Aloha configs.

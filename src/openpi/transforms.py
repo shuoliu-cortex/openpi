@@ -245,6 +245,26 @@ class AbsoluteActions(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class StateDropout(DataTransformFn):
+    """Randomly hides the state from the discrete (Pi05) prompt during training.
+
+    Only marks the sample; `TokenizePrompt` then tokenizes it with an empty state. The state itself is kept, since
+    output transforms (e.g. `AbsoluteActions`) still need it. Only applies to training samples (those with
+    "actions"), so inference always sees the state.
+    """
+
+    prob: float
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if self.prob <= 0 or "actions" not in data:
+            return data
+        # Fresh entropy per call: the global numpy RNG may be identical across data loader workers.
+        if np.random.default_rng().random() < self.prob:
+            return {**data, "drop_state": True}
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
 class TokenizePrompt(DataTransformFn):
     tokenizer: _tokenizer.PaligemmaTokenizer
     discrete_state_input: bool = False
@@ -253,9 +273,15 @@ class TokenizePrompt(DataTransformFn):
         if (prompt := data.pop("prompt", None)) is None:
             raise ValueError("Prompt is required")
 
+        # Set by `StateDropout`. Popped unconditionally so that all samples in a batch have the same keys.
+        drop_state = data.pop("drop_state", False)
+
         if self.discrete_state_input:
             if (state := data.get("state", None)) is None:
                 raise ValueError("State is required.")
+            if drop_state:
+                # Keep the Pi05 prompt format but with an empty state: "Task: ..., State: ;\nAction: ".
+                state = np.zeros((0,), dtype=np.float32)
         else:
             state = None
 
