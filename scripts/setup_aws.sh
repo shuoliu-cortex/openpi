@@ -12,7 +12,7 @@
 #   --skip-check      Do not run the dataset self-check.
 #
 # The dataset is expected at $HF_LEROBOT_HOME/local/abc130k-eef
-# (HF_LEROBOT_HOME defaults to ~/.cache/huggingface/lerobot).
+# (HF_LEROBOT_HOME defaults to $HF_HOME/lerobot, or ~/.cache/huggingface/lerobot without HF_HOME).
 
 set -euo pipefail
 
@@ -35,7 +35,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$(dirname "$0")/.."
-export HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}"
+# Same default as LeRobot: $HF_LEROBOT_HOME, else $HF_HOME/lerobot, else ~/.cache/huggingface/lerobot.
+export HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-${HF_HOME:-$HOME/.cache/huggingface}/lerobot}"
 DATA_DIR="$HF_LEROBOT_HOME/$REPO_ID"
 
 step() { echo; echo "==> $*"; }

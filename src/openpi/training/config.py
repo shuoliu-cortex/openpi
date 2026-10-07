@@ -91,6 +91,8 @@ class DataConfig:
 
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
+    # If set, only these LeRobot episode indices are loaded. None loads the whole dataset.
+    episodes: Sequence[int] | None = None
 
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
@@ -173,6 +175,8 @@ class DataConfigFactory(abc.ABC):
     assets: AssetsConfig = dataclasses.field(default_factory=AssetsConfig)
     # Base config that will be updated by the factory.
     base_config: tyro.conf.Suppress[DataConfig | None] = None
+    # If set, only these LeRobot episode indices are loaded (e.g. for a quick test on part of a dataset).
+    episodes: Sequence[int] | None = None
 
     @abc.abstractmethod
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -181,10 +185,12 @@ class DataConfigFactory(abc.ABC):
     def create_base_config(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repo_id = self.repo_id if self.repo_id is not tyro.MISSING else None
         asset_id = self.assets.asset_id or repo_id
+        base_config = self.base_config or DataConfig()
         return dataclasses.replace(
-            self.base_config or DataConfig(),
+            base_config,
             repo_id=repo_id,
             asset_id=asset_id,
+            episodes=self.episodes if self.episodes is not None else base_config.episodes,
             norm_stats=self._load_norm_stats(epath.Path(self.assets.assets_dir or assets_dirs), asset_id),
             use_quantile_norm=model_config.model_type != ModelType.PI0,
         )
@@ -915,6 +921,31 @@ _CONFIGS = [
         ema_decay=0.99,
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=20_000,
+    ),
+    TrainConfig(
+        # LoRA variant of pi05_yam_abc for GPUs with less memory (e.g. a 32 GB card); same data pipeline.
+        name="pi05_yam_abc_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotYamAbcDataConfig(
+            repo_id="local/abc130k-eef",
+            assets=AssetsConfig(assets_dir="./assets/pi05_yam_abc", asset_id="abc130k-eef"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=20_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
     ),
     #
     # Fine-tuning Aloha configs.
