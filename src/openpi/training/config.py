@@ -911,16 +911,19 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="abc130k-eef"),
             base_config=DataConfig(prompt_from_task=True),
         ),
-        batch_size=32,
+        batch_size=256,
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000,
-            peak_lr=2.5e-5,
-            decay_steps=20_000,
+            peak_lr=5e-5,
+            decay_steps=30_000,
             decay_lr=2.5e-6,
         ),
         ema_decay=0.99,
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
-        num_train_steps=20_000,
+        num_train_steps=30_000,
+        save_interval=5_000,
+        keep_period=5_000,
+        num_workers=32,
     ),
     TrainConfig(
         # LoRA variant of pi05_yam_abc for GPUs with less memory (e.g. a 32 GB card); same data pipeline.
