@@ -539,7 +539,7 @@ class LeRobotYamAbcDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotYamAbcJointDataConfig(DataConfigFactory):
-    """Config for the YamAbc (XDOF/ABC) bimanual dataset with joint actions (cameras top/left_wrist/right_wrist).
+    """Config for YamAbc (XDOF/ABC) bimanual datasets with joint actions (cameras top + left/right wrist).
 
     State and actions are absolute joint positions (`observation.state` / `action`, 2x 6 joints + gripper), with no
     delta transform.
@@ -549,9 +549,12 @@ class LeRobotYamAbcJointDataConfig(DataConfigFactory):
     default_prompt: str | None = None
     # Action keys that will be used to read the action sequence from the dataset.
     action_sequence_keys: Sequence[str] = ("action",)
+    # Dataset camera names (`observation.images.<name>`) of the left and right wrist cameras.
+    wrist_camera_keys: tuple[str, str] = ("left_wrist", "right_wrist")
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        left_cam, right_cam = self.wrist_camera_keys
         # Maps LeRobot dataset keys to the keys expected by `YamAbcJointInputs`. Only used for training.
         repack_transform = _transforms.Group(
             inputs=[
@@ -559,8 +562,8 @@ class LeRobotYamAbcJointDataConfig(DataConfigFactory):
                     {
                         "images": {
                             "top": "observation.images.top",
-                            "left_wrist": "observation.images.left_wrist",
-                            "right_wrist": "observation.images.right_wrist",
+                            "left_wrist": f"observation.images.{left_cam}",
+                            "right_wrist": f"observation.images.{right_cam}",
                         },
                         "state": "observation.state",
                         "actions": "action",
