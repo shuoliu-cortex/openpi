@@ -492,8 +492,11 @@ class LeRobotYamAbcDataConfig(DataConfigFactory):
     # Action keys that will be used to read the action sequence from the dataset.
     action_sequence_keys: Sequence[str] = ("action.eef",)
     # Probability of hiding the absolute EEF state from the prompt for a training sample, so the policy does not
-    # rely too much on it. Inference always sees the state.
+    # rely too much on it.
     state_dropout_prob: float = 0.3
+    # If true, always hide the state from the prompt at inference (in-distribution thanks to `state_dropout_prob`).
+    # Does not affect training. Can be enabled at serve time with `serve_policy.py --drop-state`.
+    inference_drop_state: bool = False
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -518,7 +521,7 @@ class LeRobotYamAbcDataConfig(DataConfigFactory):
             inputs=[
                 yam_abc_policy.YamAbcInputs(),
                 yam_abc_policy.RelativeEefActions(),
-                _transforms.StateDropout(self.state_dropout_prob),
+                _transforms.StateDropout(self.state_dropout_prob, drop_at_inference=self.inference_drop_state),
             ],
             outputs=[yam_abc_policy.AbsoluteEefActions(), yam_abc_policy.YamAbcOutputs()],
         )
@@ -942,6 +945,42 @@ _CONFIGS = [
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=20_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
+    ),
+    TrainConfig(
+        # LoRA finetune of the pi05_yam_abc stage-0 checkpoint on the ABC sim_224 dataset (same EEF convention as
+        # abc130k-eef). The dataset is expected at $HF_LEROBOT_HOME/<repo_id>, e.g.
+        #   ln -s /nvme1/datasets/abc/sim_224/sim_put_the_plastic_bottles_in_the_bin/lerobot $HF_LEROBOT_HOME/local/abc-sim-224
+        # Reuses the checkpoint's abc130k-eef norm stats so inputs/outputs stay in the space it was trained on.
+        name="pi05_yam_abc_sim_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotYamAbcDataConfig(
+            repo_id="local/abc-sim-224-dishrack",
+            assets=AssetsConfig(assets_dir="./assets/pi05_yam_abc", asset_id="abc130k-eef"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/nvme1/checkpoints/openpi/bmw/stage0_step29999/params"),
+        # Decay over the full run so the LR reaches its floor at the last step.
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        num_train_steps=5000,
+        keep_period=1000,
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             action_horizon=30,

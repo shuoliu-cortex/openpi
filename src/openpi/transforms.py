@@ -249,14 +249,18 @@ class StateDropout(DataTransformFn):
     """Randomly hides the state from the discrete (Pi05) prompt during training.
 
     Only marks the sample; `TokenizePrompt` then tokenizes it with an empty state. The state itself is kept, since
-    output transforms (e.g. `AbsoluteActions`) still need it. Only applies to training samples (those with
-    "actions"), so inference always sees the state.
+    output transforms (e.g. `AbsoluteActions`) still need it. Random dropout only applies to training samples
+    (those with "actions"). Inference samples keep the state, unless `drop_at_inference` is set, in which case it
+    is always hidden.
     """
 
     prob: float
+    drop_at_inference: bool = False
 
     def __call__(self, data: DataDict) -> DataDict:
-        if self.prob <= 0 or "actions" not in data:
+        if "actions" not in data:
+            return {**data, "drop_state": True} if self.drop_at_inference else data
+        if self.prob <= 0:
             return data
         # Fresh entropy per call: the global numpy RNG may be identical across data loader workers.
         if np.random.default_rng().random() < self.prob:

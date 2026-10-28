@@ -96,8 +96,9 @@ def test_state_dropout():
 
     assert _transforms.StateDropout(1.0)(data)["drop_state"]
     assert "drop_state" not in _transforms.StateDropout(0.0)(data)
-    # Inference samples have no actions and always keep the state.
+    # Inference samples have no actions and keep the state unless `drop_at_inference` is set.
     assert "drop_state" not in _transforms.StateDropout(1.0)({"state": np.zeros(2)})
+    assert _transforms.StateDropout(0.0, drop_at_inference=True)({"state": np.zeros(2)})["drop_state"]
 
 
 def test_tokenize_no_prompt():
