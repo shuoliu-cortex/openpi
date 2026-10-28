@@ -104,7 +104,8 @@ ok "JAX runs on the GPUs"
 
 step "Done"
 cat <<EOF
-    Keep HF_LEROBOT_HOME set in every shell (e.g. add it to ~/.bashrc):
+    Keep uv on PATH and HF_LEROBOT_HOME set in every shell (e.g. add both to ~/.bashrc):
+        export PATH="\$HOME/.local/bin:\$PATH"
         export HF_LEROBOT_HOME=$HF_LEROBOT_HOME
     Log in to Hugging Face (datasets, checkpoint backup) and wandb (or pass --no-wandb-enabled to train.py):
         uv run hf auth login

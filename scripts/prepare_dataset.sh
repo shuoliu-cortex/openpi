@@ -6,14 +6,14 @@
 #   scripts/prepare_dataset.sh <repo_id> [options]
 #
 #   scripts/prepare_dataset.sh cortexairobot/jdsample-wipe-plates-v3 --exp-name jd_wipe_v1
-#   scripts/prepare_dataset.sh cortexairobot/jdsample-wipe-plates-v3 --asset-id jd_sample/jdsample-wipe-plates-v3
+#   scripts/prepare_dataset.sh cortexairobot/jdsample-wipe-plates-v3 --robot pi05_yam_abc
 #
 # <repo_id> is the Hugging Face dataset repo, downloaded to $HF_LEROBOT_HOME/<repo_id>. A dataset you put there
 # yourself (or any local/<name> repo id) is used as is; pass --skip-download to not contact the Hub.
 #
 # Options:
-#   --asset-id ID       Where the norm stats live: assets/pi05_yam_abc_joint/<ID>/norm_stats.json
-#                       (default <repo_id>). Computed from the parquet files if missing.
+#   --robot NAME        Norm stats live in assets/<robot>/<dataset>/norm_stats.json, with <dataset> the last part of
+#                       <repo_id> (default robot: pi05_yam_abc). Computed from the parquet files if missing.
 #   --revision REV      Branch, tag or commit of the dataset repo (default: main).
 #   --data-root DIR     Use DIR as HF_LEROBOT_HOME.
 #   --exp-name NAME     Fill in the experiment name in the printed commands.
@@ -30,7 +30,7 @@ CONFIG_NAME="pi05_yam_abc_joint"
 [[ $# -ge 1 && "$1" != -* ]] || { sed -n '2,/^$/{s/^# \{0,1\}//;p}' "$0"; exit 1; }
 REPO_ID=$1
 shift
-ASSET_ID=""
+ROBOT="pi05_yam_abc"
 REVISION=""
 DATA_ROOT=""
 EXP_NAME="<name>"
@@ -38,7 +38,7 @@ SKIP_DOWNLOAD=0
 SKIP_CHECK=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --asset-id) ASSET_ID="$2"; shift 2 ;;
+        --robot) ROBOT="$2"; shift 2 ;;
         --revision) REVISION="$2"; shift 2 ;;
         --data-root) DATA_ROOT="$2"; shift 2 ;;
         --exp-name) EXP_NAME="$2"; shift 2 ;;
@@ -55,8 +55,9 @@ if [[ -n "$DATA_ROOT" ]]; then export HF_LEROBOT_HOME="$DATA_ROOT"; fi
 export HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-${HF_HOME:-$HOME/.cache/huggingface}/lerobot}"
 export PATH="$HOME/.local/bin:$PATH"
 DATA_DIR="$HF_LEROBOT_HOME/$REPO_ID"
-ASSET_ID="${ASSET_ID:-$REPO_ID}"
-NORM_STATS="assets/$CONFIG_NAME/$ASSET_ID/norm_stats.json"
+# The config reads norm stats from assets/<asset_id> (AssetsConfig.assets_dir="assets").
+ASSET_ID="$ROBOT/${REPO_ID##*/}"
+NORM_STATS="assets/$ASSET_ID/norm_stats.json"
 
 step() { echo; echo "==> $*"; }
 ok() { echo "    ok: $*"; }
@@ -101,8 +102,8 @@ EOF
 ) || die "unsupported dataset (see the error above)."
 ok "joint state/action [14], cameras top + ${WRIST_CAMS/ //}"
 
-OVERRIDES=(--data.repo-id "$REPO_ID")
-if [[ "$ASSET_ID" != "$REPO_ID" ]]; then OVERRIDES+=(--data.assets.asset-id "$ASSET_ID"); fi
+# Always pass the asset id: the config's own default points at another dataset's stats.
+OVERRIDES=(--data.repo-id "$REPO_ID" --data.assets.asset-id "$ASSET_ID")
 if [[ "$WRIST_CAMS" != "left_wrist right_wrist" ]]; then
     read -r -a cams <<<"$WRIST_CAMS"
     OVERRIDES+=(--data.wrist-camera-keys "${cams[@]}")

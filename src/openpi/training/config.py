@@ -1042,13 +1042,14 @@ _CONFIGS = [
         ema_decay=None,
     ),
     TrainConfig(
-        # Joint-space variant of pi05_yam_abc on the same dataset: absolute joint actions. Compute norm stats first:
-        #   uv run scripts/compute_norm_stats.py --config-name pi05_yam_abc_joint
+        # Joint-space variant of pi05_yam_abc: absolute joint actions. Norm stats live in assets/<robot>/<dataset>/.
+        # For another dataset, scripts/prepare_dataset.sh <repo_id> computes them and prints the
+        # --data.repo-id / --data.assets.asset-id overrides to train with.
         name="pi05_yam_abc_joint",
         model=pi0_config.Pi0Config(pi05=True, action_horizon=30),
         data=LeRobotYamAbcJointDataConfig(
             repo_id="local/abc130k-eef",
-            assets=AssetsConfig(asset_id="abc130k-joint"),
+            assets=AssetsConfig(assets_dir="assets", asset_id="pi05_yam_abc/abc130k-joint"),
             base_config=DataConfig(prompt_from_task=True),
         ),
         batch_size=256,
