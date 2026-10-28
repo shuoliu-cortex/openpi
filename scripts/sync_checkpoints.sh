@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Periodically backs up openpi training checkpoints, and restores them on a new machine.
-# The backup destination is either a local directory (e.g. a Lambda persistent filesystem) or an S3 prefix.
+# The backup destination is a local directory (e.g. a Lambda persistent filesystem), an S3 prefix, or a path in a
+# Hugging Face model repo (hf://<user>/<repo>[/<path>], created private if missing; needs a write token).
 #
 # Back up (run next to training, e.g. in a second tmux window):
 #   scripts/sync_checkpoints.sh push checkpoints/pi05_yam_abc/<exp> /lambda/nfs/<fs>/checkpoints/pi05_yam_abc/<exp>
 #   scripts/sync_checkpoints.sh push checkpoints/pi05_yam_abc/<exp> s3://<bucket>/openpi/pi05_yam_abc/<exp>
+#   scripts/sync_checkpoints.sh push checkpoints/pi05_yam_abc/<exp> hf://<user>/<repo>/pi05_yam_abc/<exp>
 # Restore the latest complete checkpoint on a new machine, then train with --resume:
 #   scripts/sync_checkpoints.sh pull checkpoints/pi05_yam_abc/<exp> <same destination as push>
 #
@@ -24,7 +26,7 @@ set -euo pipefail
 MARKER="_BACKUP_COMPLETE"
 
 usage() {
-    sed -n '2,20p' "$0"
+    sed -n '2,22p' "$0"
     exit 1
 }
 
@@ -51,7 +53,103 @@ done
 log() { echo "[$(date '+%F %T')] $*"; }
 
 # Destination backends. Each takes paths relative to $REMOTE.
-if [[ "$REMOTE" == s3://* ]]; then
+if [[ "$REMOTE" == hf://* ]]; then
+    REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    command -v uv >/dev/null || { echo "uv not found" >&2; exit 1; }
+    # hf://<user>/<repo>[/<path>]: a Hugging Face model repo, plus an optional path inside it.
+    hf_path=${REMOTE#hf://}
+    HF_REPO=$(cut -d/ -f1-2 <<<"$hf_path")
+    HF_PREFIX=$(cut -s -d/ -f3- <<<"$hf_path")
+    [[ "$HF_REPO" == */* ]] || { echo "Expected hf://<user>/<repo>[/<path>], got $REMOTE" >&2; exit 1; }
+    # Runs one operation against the repo with huggingface_hub (log in with `uv run hf auth login`, or set HF_TOKEN).
+    hf_op() {
+        uv run --project "$REPO_ROOT" python - "$HF_REPO" "$HF_PREFIX" "$LOCAL" "$MARKER" "$@" <<'EOF'
+import os
+import pathlib
+import shutil
+import sys
+
+import huggingface_hub as hf
+from huggingface_hub.utils import EntryNotFoundError
+from huggingface_hub.utils import RepositoryNotFoundError
+
+repo, prefix, local, marker, op, *args = sys.argv[1:]
+local = pathlib.Path(local)
+api = hf.HfApi()
+
+
+def remote(rel=""):
+    return "/".join(p for p in (prefix, rel) if p)
+
+
+def tree(rel=""):
+    try:
+        return list(api.list_repo_tree(repo, remote(rel) or None))
+    except (EntryNotFoundError, RepositoryNotFoundError):
+        return []
+
+
+def download(allow_patterns, rel=""):
+    # Download into a staging dir, then move the files under remote(rel) to local/rel.
+    stage = local / ".hf_download"
+    hf.snapshot_download(repo, allow_patterns=allow_patterns, local_dir=stage)
+    src, dest = stage / remote(rel), local / rel
+    for f in src.rglob("*"):
+        rel = f.relative_to(src)
+        if f.is_file() and rel.parts[0] != ".cache" and rel.name != marker:
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            os.replace(f, dest / rel)
+    shutil.rmtree(stage)
+
+
+if op == "list_dirs":
+    for e in tree():
+        if isinstance(e, hf.hf_api.RepoFolder):
+            print(e.path.rsplit("/", 1)[-1])
+elif op == "has_file":
+    sys.exit(0 if api.file_exists(repo, remote(args[0])) else 1)
+elif op == "top_files_to":
+    files = [f for f in local.iterdir() if f.is_file()]
+    if files:
+        api.create_repo(repo, private=True, exist_ok=True)
+        ops = [hf.CommitOperationAdd(remote(f.name), str(f)) for f in files]
+        api.create_commit(repo, ops, commit_message="Back up top-level files")
+elif op == "top_files_from":
+    names = [e.path.rsplit("/", 1)[-1] for e in tree() if isinstance(e, hf.hf_api.RepoFile)]
+    names = [n for n in names if n != ".gitattributes"]
+    if names:
+        download([remote(n) for n in names])
+elif op == "step_to":
+    api.create_repo(repo, private=True, exist_ok=True)
+    # delete_patterns removes leftovers of an earlier interrupted upload of this step.
+    api.upload_folder(
+        repo_id=repo,
+        folder_path=local / args[0],
+        path_in_repo=remote(args[0]),
+        delete_patterns="*",
+        ignore_patterns=marker,
+        commit_message=f"Back up step {args[0]}",
+    )
+elif op == "step_from":
+    download(remote(args[0]) + "/*", args[0])
+elif op == "write_marker":
+    api.upload_file(path_or_fileobj=b"", path_in_repo=remote(f"{args[0]}/{marker}"), repo_id=repo,
+                    commit_message=f"Mark step {args[0]} complete")
+elif op == "remove":
+    api.delete_folder(remote(args[0]), repo, commit_message=f"Prune step {args[0]}")
+else:
+    sys.exit(f"unknown op {op}")
+EOF
+    }
+    dest_list_dirs() { hf_op list_dirs; }
+    dest_has_file() { hf_op has_file "$1"; }
+    copy_top_files_to_dest() { hf_op top_files_to; }
+    copy_top_files_from_dest() { hf_op top_files_from; }
+    copy_step_to_dest() { hf_op step_to "$1"; }
+    copy_step_from_dest() { hf_op step_from "$1"; }
+    write_marker() { hf_op write_marker "$1"; }
+    remove_step() { hf_op remove "$1"; }
+elif [[ "$REMOTE" == s3://* ]]; then
     command -v aws >/dev/null || { echo "aws CLI not found" >&2; exit 1; }
     # Subdirectory names directly under $REMOTE.
     dest_list_dirs() {
