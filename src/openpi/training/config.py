@@ -20,6 +20,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.yam_abc_joint_policy as yam_abc_joint_policy
 import openpi.policies.yam_abc_policy as yam_abc_policy
 import openpi.policies.yam_ma2_policy as yam_ma2_policy
 import openpi.shared.download as _download
@@ -537,6 +538,53 @@ class LeRobotYamAbcDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotYamAbcJointDataConfig(DataConfigFactory):
+    """Config for the YamAbc (XDOF/ABC) bimanual dataset with joint actions (cameras top/left_wrist/right_wrist).
+
+    State and actions are absolute joint positions (`observation.state` / `action`, 2x 6 joints + gripper), with no
+    delta transform.
+    """
+
+    # If provided, will be injected into the input data if the "prompt" key is not present.
+    default_prompt: str | None = None
+    # Action keys that will be used to read the action sequence from the dataset.
+    action_sequence_keys: Sequence[str] = ("action",)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Maps LeRobot dataset keys to the keys expected by `YamAbcJointInputs`. Only used for training.
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "images": {
+                            "top": "observation.images.top",
+                            "left_wrist": "observation.images.left_wrist",
+                            "right_wrist": "observation.images.right_wrist",
+                        },
+                        "state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+        data_transforms = _transforms.Group(
+            inputs=[yam_abc_joint_policy.YamAbcJointInputs()],
+            outputs=[yam_abc_joint_policy.YamAbcJointOutputs()],
+        )
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class LeRobotDROIDDataConfig(DataConfigFactory):
     """
     Example data config for custom DROID dataset in LeRobot format.
@@ -989,6 +1037,31 @@ _CONFIGS = [
         ).get_freeze_filter(),
         # Turn off EMA for LoRA finetuning.
         ema_decay=None,
+    ),
+    TrainConfig(
+        # Joint-space variant of pi05_yam_abc on the same dataset: absolute joint actions. Compute norm stats first:
+        #   uv run scripts/compute_norm_stats.py --config-name pi05_yam_abc_joint
+        name="pi05_yam_abc_joint",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=30),
+        data=LeRobotYamAbcJointDataConfig(
+            repo_id="local/abc130k-eef",
+            assets=AssetsConfig(asset_id="abc130k-joint"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=256,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=30_000,
+            decay_lr=2.5e-6,
+        ),
+        ema_decay=0.99,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30_000,
+        # Save often to limit lost progress if the machine dies; only every 5k-step checkpoint is kept.
+        save_interval=1_000,
+        keep_period=5_000,
+        num_workers=32,
     ),
     #
     # Fine-tuning Aloha configs.
