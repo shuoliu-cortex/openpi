@@ -1,6 +1,7 @@
 import dataclasses
 import enum
 import logging
+import pathlib
 import socket
 
 import tyro
@@ -28,6 +29,9 @@ class Checkpoint:
     config: str
     # Checkpoint directory (e.g., "checkpoints/pi0_aloha_sim/exp/10000").
     dir: str
+    # Norm stats to load, from <dir>/assets/<asset_id>. Defaults to the config's asset id, or, when the checkpoint
+    # does not have that one (trained with a --data.assets.asset-id override), to the only norm stats it has.
+    asset_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -87,11 +91,36 @@ def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) ->
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
+def _checkpoint_asset_id(checkpoint: Checkpoint, train_config: _config.TrainConfig) -> str | None:
+    """The asset id of the norm stats saved with the checkpoint, if it differs from the config's."""
+    if checkpoint.asset_id is not None:
+        return checkpoint.asset_id
+    assets_dir = pathlib.Path(checkpoint.dir) / "assets"
+    if not assets_dir.is_dir():  # e.g. a gs:// checkpoint; keep the config's asset id.
+        return None
+    config_asset_id = train_config.data.create(train_config.assets_dirs, train_config.model).asset_id
+    if config_asset_id is not None and (assets_dir / config_asset_id / "norm_stats.json").is_file():
+        return None
+    found = sorted(str(p.parent.relative_to(assets_dir)) for p in assets_dir.rglob("norm_stats.json"))
+    if len(found) != 1:
+        raise ValueError(
+            f"{assets_dir} has no norm stats for asset id {config_asset_id!r} but {found}; pass --policy.asset-id."
+        )
+    logging.info("Using the checkpoint's norm stats for asset id %s", found[0])
+    return found[0]
+
+
 def create_policy(args: Args) -> _policy.Policy:
     """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
             train_config = _config.get_config(args.policy.config)
+            if asset_id := _checkpoint_asset_id(args.policy, train_config):
+                data = train_config.data
+                train_config = dataclasses.replace(
+                    train_config,
+                    data=dataclasses.replace(data, assets=dataclasses.replace(data.assets, asset_id=asset_id)),
+                )
             if args.drop_state:
                 if not hasattr(train_config.data, "inference_drop_state"):
                     raise ValueError(f"Config {args.policy.config} does not support --drop-state.")
