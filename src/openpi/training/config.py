@@ -1062,7 +1062,6 @@ _CONFIGS = [
         ema_decay=0.99,
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps=15_000,
-        # Save often to limit lost progress if the machine dies; only every 5k-step checkpoint is kept.
         save_interval=1_000,
         keep_period=2_500,
         num_workers=32,
