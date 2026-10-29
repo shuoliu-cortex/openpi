@@ -5,7 +5,7 @@ State stats come from `observation.eef` in `meta/stats.json`. Action stats come 
 inv(T(observation.eef[t])) @ T(action.eef[t + k]), pooled over all k.
 
 Usage:
-    uv run scripts/yam_abc_norm_stats.py --meta-dir meta --horizon 30
+    uv run scripts/yam_abc_eef_norm_stats.py --meta-dir meta --horizon 30
 """
 
 import json

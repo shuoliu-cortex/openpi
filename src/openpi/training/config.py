@@ -20,8 +20,8 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.yam_abc_eef_policy as yam_abc_eef_policy
 import openpi.policies.yam_abc_joint_policy as yam_abc_joint_policy
-import openpi.policies.yam_abc_policy as yam_abc_policy
 import openpi.policies.yam_ma2_policy as yam_ma2_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
@@ -479,7 +479,7 @@ class LeRobotYamMa2DataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotYamAbcDataConfig(DataConfigFactory):
+class LeRobotYamAbcEefDataConfig(DataConfigFactory):
     """Config for the YamAbc (XDOF/ABC) bimanual dataset with EEF actions (cameras top/left_wrist/right_wrist).
 
     State is the absolute EEF pose (`observation.eef`). The absolute EEF action chunk (`action.eef`) is loaded and,
@@ -501,7 +501,7 @@ class LeRobotYamAbcDataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        # Maps LeRobot dataset keys to the keys expected by `YamAbcInputs`. Only used for training.
+        # Maps LeRobot dataset keys to the keys expected by `YamAbcEefInputs`. Only used for training.
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
@@ -520,11 +520,11 @@ class LeRobotYamAbcDataConfig(DataConfigFactory):
         )
         data_transforms = _transforms.Group(
             inputs=[
-                yam_abc_policy.YamAbcInputs(),
-                yam_abc_policy.RelativeEefActions(),
+                yam_abc_eef_policy.YamAbcEefInputs(),
+                yam_abc_eef_policy.RelativeEefActions(),
                 _transforms.StateDropout(self.state_dropout_prob, drop_at_inference=self.inference_drop_state),
             ],
-            outputs=[yam_abc_policy.AbsoluteEefActions(), yam_abc_policy.YamAbcOutputs()],
+            outputs=[yam_abc_eef_policy.AbsoluteEefActions(), yam_abc_eef_policy.YamAbcEefOutputs()],
         )
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
 
@@ -956,11 +956,11 @@ _CONFIGS = [
         # YamAbc (XDOF/ABC) bimanual data with chunk-relative EEF actions. The dataset is expected at
         # $HF_LEROBOT_HOME/<repo_id> (e.g. symlink the exported abc130k-eef directory there).
         # Norm stats come from the dataset's precomputed H30 chunk stats; build them first with:
-        #   uv run scripts/yam_abc_norm_stats.py --meta-dir meta --horizon 30
+        #   uv run scripts/yam_abc_eef_norm_stats.py --meta-dir meta --horizon 30
         # The action horizon must match the horizon those stats were computed with.
         name="pi05_yam_abc",
         model=pi0_config.Pi0Config(pi05=True, action_horizon=30),
-        data=LeRobotYamAbcDataConfig(
+        data=LeRobotYamAbcEefDataConfig(
             repo_id="local/abc130k-eef",
             assets=AssetsConfig(asset_id="abc130k-eef"),
             base_config=DataConfig(prompt_from_task=True),
@@ -989,7 +989,7 @@ _CONFIGS = [
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ),
-        data=LeRobotYamAbcDataConfig(
+        data=LeRobotYamAbcEefDataConfig(
             repo_id="local/abc130k-eef",
             assets=AssetsConfig(assets_dir="./assets/pi05_yam_abc", asset_id="abc130k-eef"),
             base_config=DataConfig(prompt_from_task=True),
@@ -1017,7 +1017,7 @@ _CONFIGS = [
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ),
-        data=LeRobotYamAbcDataConfig(
+        data=LeRobotYamAbcEefDataConfig(
             repo_id="local/abc-sim-224-dishrack",
             assets=AssetsConfig(assets_dir="./assets/pi05_yam_abc", asset_id="abc130k-eef"),
             base_config=DataConfig(prompt_from_task=True),

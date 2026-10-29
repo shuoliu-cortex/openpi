@@ -141,7 +141,7 @@ fi
 
 # 6. Norm stats.
 step "Norm stats"
-[[ -f "$NORM_STATS" ]] || die "$NORM_STATS not found. Build it with: uv run scripts/yam_abc_norm_stats.py --meta-dir $DATA_DIR/meta --horizon 30"
+[[ -f "$NORM_STATS" ]] || die "$NORM_STATS not found. Build it with: uv run scripts/yam_abc_eef_norm_stats.py --meta-dir $DATA_DIR/meta --horizon 30"
 ok "$NORM_STATS"
 
 # 7. Self-check: load a sample, decode its videos and run the full transform chain.

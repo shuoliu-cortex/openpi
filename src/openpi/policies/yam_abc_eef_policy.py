@@ -11,7 +11,7 @@ ABC_EEF_ARM_DIM = 10
 ABC_EEF_DIM = 2 * ABC_EEF_ARM_DIM
 
 
-def make_yam_abc_example() -> dict:
+def make_yam_abc_eef_example() -> dict:
     """Creates a random input example for the YamAbc EEF policy."""
     arm = np.array([0.3, 0.0, 0.2, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0], dtype=np.float32)
     return {
@@ -80,7 +80,7 @@ def _absolute_eef(state: np.ndarray, actions: np.ndarray) -> np.ndarray:
 
 
 @dataclasses.dataclass(frozen=True)
-class YamAbcInputs(transforms.DataTransformFn):
+class YamAbcEefInputs(transforms.DataTransformFn):
     """Inputs for the YamAbc bimanual EEF policy.
 
     Expected inputs:
@@ -140,7 +140,7 @@ class AbsoluteEefActions(transforms.DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
-class YamAbcOutputs(transforms.DataTransformFn):
+class YamAbcEefOutputs(transforms.DataTransformFn):
     """Outputs for the YamAbc bimanual EEF policy."""
 
     def __call__(self, data: dict) -> dict:
