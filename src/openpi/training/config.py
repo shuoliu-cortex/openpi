@@ -1008,7 +1008,7 @@ _CONFIGS = [
     TrainConfig(
         # LoRA finetune of the pi05_yam_abc stage-0 checkpoint on the ABC sim_224 dataset (same EEF convention as
         # abc130k-eef). The dataset is expected at $HF_LEROBOT_HOME/<repo_id>, e.g.
-        #   ln -s /nvme1/datasets/abc/sim_224/sim_put_the_plastic_bottles_in_the_bin/lerobot $HF_LEROBOT_HOME/local/abc-sim-224
+        #   ln -s /nvme1/abc/data/sim_224/sim_put_the_plastic_bottles_in_the_bin/lerobot $HF_LEROBOT_HOME/local/abc-sim-224
         # Reuses the checkpoint's abc130k-eef norm stats so inputs/outputs stay in the space it was trained on.
         name="pi05_yam_abc_sim_lora",
         model=pi0_config.Pi0Config(
@@ -1022,7 +1022,7 @@ _CONFIGS = [
             assets=AssetsConfig(assets_dir="./assets/pi05_yam_abc", asset_id="abc130k-eef"),
             base_config=DataConfig(prompt_from_task=True),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/nvme1/checkpoints/openpi/bmw/stage0_step29999/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/nvme1/bmw/ckpt/openpi/stage0_step29999/params"),
         # Decay over the full run so the LR reaches its floor at the last step.
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=500,
