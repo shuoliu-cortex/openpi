@@ -31,12 +31,20 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
+def _get_image(images: dict, *keys: str):
+    for key in keys:
+        if key in images:
+            return images[key]
+    raise KeyError(f"images must contain one of {keys}, got {list(images)}")
+
+
 @dataclasses.dataclass(frozen=True)
 class YamAbcJointInputs(transforms.DataTransformFn):
     """Inputs for the YamAbc bimanual policy with absolute joint actions.
 
     Expected inputs:
-    - images: dict with keys "top", "left_wrist", "right_wrist" (HWC or CHW, uint8 or float in [0, 1]).
+    - images: dict with keys "top", "left_wrist", "right_wrist" (HWC or CHW, uint8 or float in [0, 1]). The wrist
+      cameras may also be named "left" / "right", as sent by clients using the YamMa2Inputs format.
     - state: [14] absolute joint positions, 2x (6 joints + gripper).
     - actions: [action_horizon, 14] absolute joint positions (training only).
     """
@@ -45,8 +53,8 @@ class YamAbcJointInputs(transforms.DataTransformFn):
         in_images = data["images"]
         images = {
             "base_0_rgb": _parse_image(in_images["top"]),
-            "left_wrist_0_rgb": _parse_image(in_images["left_wrist"]),
-            "right_wrist_0_rgb": _parse_image(in_images["right_wrist"]),
+            "left_wrist_0_rgb": _parse_image(_get_image(in_images, "left_wrist", "left")),
+            "right_wrist_0_rgb": _parse_image(_get_image(in_images, "right_wrist", "right")),
         }
         inputs = {
             "image": images,
